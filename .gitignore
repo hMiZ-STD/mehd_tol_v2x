@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+sumo.log
+v2x_kpi_log.csv
+*.csv
+outputs/
+models/
+.env
+venv/
+.DS_Store
+*.pkl

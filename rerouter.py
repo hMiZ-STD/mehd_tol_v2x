@@ -34,12 +34,24 @@ def _edge_midpoint(edge_id: str):
 def _try_reroute(veh_id: str, candidates: list) -> bool:
     for dest in candidates:
         try:
+            current_edge = traci.vehicle.getRoadID(veh_id)
+            if not _is_reachable(current_edge, dest):
+                continue
             traci.vehicle.changeTarget(veh_id, dest)
             traci.vehicle.rerouteTraveltime(veh_id)
             return True
         except traci.TraCIException:
             continue
     return False
+
+
+def _is_reachable(from_edge: str, to_edge: str) -> bool:
+    """Fast reachability guard to avoid SUMO changeTarget error spam."""
+    try:
+        route = traci.simulation.findRoute(from_edge, to_edge)
+        return bool(route and route.edges)
+    except traci.TraCIException:
+        return False
 
 
 def apply_rerouting() -> None:
