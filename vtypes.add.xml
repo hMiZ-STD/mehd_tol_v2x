@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<additional>
+
+    <!-- ── Two-Wheeler (TiHAN-calibrated Indian 2W) ── -->
+    <vType id="2W" accel="3.2" decel="4.0" emergencyDecel="6.0" length="1.8" width="0.8" height="1.2" minGap="0.5" tau="0.8" sigma="0.8" speedFactor="1.15" speedDev="0.15" maxSpeed="16.7" vClass="motorcycle" color="0,0,255" carFollowModel="Krauss" lcStrategic="1.5" lcCooperative="0.3" />
+
+    <!-- ── Car (TiHAN-calibrated Indian car) ── -->
+    <vType id="car" accel="2.8" decel="4.5" emergencyDecel="7.0" length="4.5" width="1.9" height="1.5" minGap="1.0" tau="1.0" sigma="0.7" speedFactor="1.1" speedDev="0.1" maxSpeed="14.0" vClass="passenger" color="255,255,0" carFollowModel="Krauss" lcStrategic="1.2" lcCooperative="0.4" />
+
+    <!-- ── Emergency / Ambulance EV ── -->
+    <vType id="ev" accel="3.5" decel="5.0" emergencyDecel="8.0" length="5.5" width="2.0" height="2.2" minGap="1.5" tau="0.9" sigma="0.3" speedFactor="1.5" speedDev="0.05" maxSpeed="25.0" vClass="emergency" color="255,0,0" carFollowModel="Krauss" guiShape="emergency" lcStrategic="2.0" lcCooperative="0.2" />
+
+</additional>
