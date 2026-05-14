@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import sys
-from pathlib import Path
 
+import sumolib
 import traci
 
 import config
@@ -15,9 +14,11 @@ from adaptive_signals import apply_adaptive_signals
 from corridor_ev_manager import update_ev_corridors
 from ev_preemption import apply_ev_preemption, get_ev_summary
 from glosa import apply_glosa
-from kpi_logger import kpi_log, log_step, save_csv
+from kpi_logger import kpi_log, log_step, reset_kpi_log, save_csv, set_output_csv
 from network_graph import build_trusted_pool
 from rerouter import apply_rerouting
+
+VALID_MODES = ("null_baseline", "rule_based_v2x", "rule_based_no_ev")
 
 
 def parse_args() -> argparse.Namespace:
@@ -27,41 +28,76 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run headless with `sumo` instead of `sumo-gui`.",
     )
+    parser.add_argument(
+        "--mode",
+        choices=VALID_MODES,
+        default="rule_based_v2x",
+        help="Simulation mode preset for baseline benchmarking.",
+    )
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=config.SIM_STEPS,
+        help="Number of simulation steps to run.",
+    )
     return parser.parse_args()
 
 
-def _resolve_sumo_binary(no_gui: bool) -> str:
-    if no_gui:
-        return config.SUMO_BINARY_NO_GUI
-    return config.SUMO_BINARY_GUI
-
-
-def _check_binary(binary: str) -> None:
-    if os.path.exists(binary):
-        return
-    if shutil.which(binary):
-        return
-    raise FileNotFoundError(
-        f"SUMO binary not found: '{binary}'. Set SUMO_HOME or add SUMO to PATH."
-    )
-
-
 def _check_cfg_exists() -> None:
-    cfg_path = Path(config.SUMO_CFG)
-    if not cfg_path.exists():
-        raise FileNotFoundError(f"SUMO config file not found: '{cfg_path}'")
+    if not os.path.exists(config.SUMO_CFG):
+        raise FileNotFoundError(f"SUMO config file not found: '{config.SUMO_CFG}'")
 
 
 def _ensure_output_dir() -> None:
-    Path(config.LOG_DIR).mkdir(parents=True, exist_ok=True)
+    os.makedirs(config.LOG_DIR, exist_ok=True)
+
+
+def _apply_mode_flags(mode: str) -> dict:
+    if mode not in VALID_MODES:
+        raise ValueError(f"Invalid mode '{mode}'. Expected one of: {VALID_MODES}")
+
+    # Keep config flags aligned for traceability across scripts.
+    config.BASELINE_MODE = mode != "rule_based_v2x"
+    config.USE_RL_SIGNALS = False
+    config.USE_RL_GLOSA = False
+
+    if mode == "null_baseline":
+        return {
+            "adaptive_signals": False,
+            "glosa": False,
+            "ev_preemption": False,
+            "rerouting": False,
+            "ev_corridor": False,
+        }
+    if mode == "rule_based_no_ev":
+        return {
+            "adaptive_signals": True,
+            "glosa": True,
+            "ev_preemption": False,
+            "rerouting": False,
+            "ev_corridor": False,
+        }
+    return {
+        "adaptive_signals": True,
+        "glosa": True,
+        "ev_preemption": True,
+        "rerouting": True,
+        "ev_corridor": True,
+    }
 
 
 def start_sumo(no_gui: bool) -> None:
     _ensure_output_dir()
     _check_cfg_exists()
 
-    sumo_binary = _resolve_sumo_binary(no_gui=no_gui)
-    _check_binary(sumo_binary)
+    binary_name = "sumo" if no_gui else "sumo-gui"
+    try:
+        sumo_binary = sumolib.checkBinary(binary_name)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Unable to resolve SUMO binary '{binary_name}'. "
+            "Ensure SUMO is installed and SUMO_HOME/PATH is set."
+        ) from exc
 
     cmd = [
         sumo_binary,
@@ -73,7 +109,7 @@ def start_sumo(no_gui: bool) -> None:
         "false",
         "--no-warnings",
         "--message-log",
-        config.SUMO_MESSAGE_LOG,
+        os.path.join(config.LOG_DIR, "sumo.log"),
     ]
 
     try:
@@ -83,46 +119,59 @@ def start_sumo(no_gui: bool) -> None:
             f"Failed to start TraCI/SUMO with command: {' '.join(cmd)}"
         ) from exc
 
-    mode = "headless (sumo)" if no_gui else "GUI (sumo-gui)"
-    print(f"SUMO launched in {mode} mode. Warnings -> {config.SUMO_MESSAGE_LOG}")
+    run_mode = "headless (sumo)" if no_gui else "GUI (sumo-gui)"
+    print(f"SUMO launched in {run_mode} mode.")
 
 
-def run(no_gui: bool = False) -> None:
+def run(
+    no_gui: bool = False,
+    mode: str = "rule_based_v2x",
+    sim_steps: int | None = None,
+    output_csv: str | None = None,
+    progress_interval: int = 300,
+) -> None:
+    steps = sim_steps if sim_steps is not None else config.SIM_STEPS
+    features = _apply_mode_flags(mode)
     step = 0
+    reset_kpi_log()
+    if output_csv:
+        set_output_csv(output_csv)
+
     try:
         start_sumo(no_gui=no_gui)
         build_trusted_pool()
+        print(f"\nV2X Simulation - mode={mode}, steps={steps}\n")
 
-        print(f"\nV2X Simulation - {config.SIM_STEPS} steps\n")
-
-        for step in range(config.SIM_STEPS):
+        for step in range(steps):
             traci.simulationStep()
+            protected_tls = set()
 
-            protected_tls = update_ev_corridors()
-            apply_adaptive_signals(protected_tls)
+            if features["ev_corridor"]:
+                protected_tls = update_ev_corridors()
 
-            for veh_id in traci.vehicle.getIDList():
-                try:
-                    if traci.vehicle.getTypeID(veh_id) != config.EV_TYPE_ID:
-                        apply_glosa(veh_id)
-                except traci.TraCIException:
-                    continue
+            if features["adaptive_signals"]:
+                apply_adaptive_signals(protected_tls)
 
-            active_evs = apply_ev_preemption()
-            apply_rerouting()
+            if features["glosa"]:
+                for veh_id in traci.vehicle.getIDList():
+                    try:
+                        if traci.vehicle.getTypeID(veh_id) != config.EV_TYPE_ID:
+                            apply_glosa(veh_id)
+                    except traci.TraCIException:
+                        continue
+
+            active_evs = []
+            if features["ev_preemption"]:
+                active_evs = apply_ev_preemption()
+
+            if features["rerouting"]:
+                apply_rerouting()
 
             if step % config.KPI_LOG_INTERVAL == 0:
                 log_step(step, active_evs)
-                if kpi_log:
-                    row = kpi_log[-1]
-                    print(
-                        f"Step {row['step']:4d} | "
-                        f"Vehs: {row['total_vehicles']:3d} | "
-                        f"Avg: {row['avg_speed_kmh']:5.1f} km/h | "
-                        f"Halted: {row['halted_vehicles']:3d} | "
-                        f"Wait: {row['avg_wait_s']:5.1f} s | "
-                        f"EVs: {row['active_evs']}"
-                    )
+
+            if step > 0 and step % progress_interval == 0:
+                print(f"[{mode}] progress: step {step}/{steps}")
 
     except FileNotFoundError as exc:
         print(f"ERROR: {exc}")
@@ -130,10 +179,10 @@ def run(no_gui: bool = False) -> None:
     except RuntimeError as exc:
         print(f"ERROR: {exc}")
         sys.exit(1)
-    except KeyboardInterrupt:
-        print(f"\nInterrupt received at step {step}. Shutting down gracefully...")
     except traci.TraCIException as exc:
         print(f"TraCI error at step {step}: {exc}")
+    except KeyboardInterrupt:
+        print(f"\nInterrupt received at step {step}. Shutting down gracefully...")
     finally:
         try:
             traci.close()
@@ -150,4 +199,4 @@ def run(no_gui: bool = False) -> None:
 
 if __name__ == "__main__":
     args = parse_args()
-    run(no_gui=args.no_gui)
+    run(no_gui=args.no_gui, mode=args.mode, sim_steps=args.steps)

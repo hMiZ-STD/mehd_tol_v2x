@@ -10,12 +10,25 @@ import traci
 from config import EV_TYPE_ID, LOG_DIR, OUTPUT_CSV
 
 kpi_log: list = []
+_output_csv_path = OUTPUT_CSV
 
 _FUEL_FACTOR = {"2W": 0.30, "car": 0.50, EV_TYPE_ID: 0.10}
 _DEFAULT_FUEL = 0.50
 
 _cum_departed = 0
 _cum_arrived = 0
+
+
+def set_output_csv(path: str) -> None:
+    global _output_csv_path
+    _output_csv_path = path
+
+
+def reset_kpi_log() -> None:
+    global _cum_departed, _cum_arrived
+    kpi_log.clear()
+    _cum_departed = 0
+    _cum_arrived = 0
 
 
 def log_step(step: int, active_evs: list) -> None:
@@ -77,7 +90,7 @@ def save_csv() -> None:
         return
 
     Path(LOG_DIR).mkdir(parents=True, exist_ok=True)
-    output_path = Path(OUTPUT_CSV)
+    output_path = Path(_output_csv_path)
 
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=kpi_log[0].keys())
