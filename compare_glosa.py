@@ -7,9 +7,10 @@ import os
 import matplotlib.pyplot as plt
 import pandas as pd
 
+import config
 import main
 
-RUN_STEPS = 1800
+RUN_STEPS = config.SIM_STEPS
 OUTPUT_DIR = "outputs"
 
 

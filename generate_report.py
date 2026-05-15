@@ -14,8 +14,6 @@ KPI_LOG_CSV = OUTPUTS_DIR / "v2x_kpi_log.csv"
 SUMMARY_OUT = OUTPUTS_DIR / "btp_summary_table.csv"
 REPORT_OUT = OUTPUTS_DIR / "btp_final_report.md"
 
-FULL_RL_EV_TRAVEL_TIME = 146.0
-NULL_BASELINE_EV_TRAVEL_TIME = 222.0
 
 
 def _na() -> str:
@@ -74,6 +72,8 @@ def _build_summary_rows(
 
     full_rl_speed = ppo_data.get("mean_avg_speed_mps")
     full_rl_wait = ppo_data.get("mean_avg_wait_s")
+    null_ev_time = null_row.get("ev_travel_time_s")
+    full_rl_ev_time = ppo_data.get("mean_ev_travel_time_s")
 
     rows = [
         {
@@ -81,7 +81,7 @@ def _build_summary_rows(
             "avg_speed_mps": null_row.get("avg_speed_mps"),
             "avg_wait_s": null_row.get("avg_wait_s"),
             "throughput": null_row.get("throughput"),
-            "ev_travel_time_s": NULL_BASELINE_EV_TRAVEL_TIME,
+            "ev_travel_time_s": null_ev_time,
             "collisions": None,
             "notes": "Stable control case with best conventional throughput but slower EV passage.",
         },
@@ -108,7 +108,7 @@ def _build_summary_rows(
             "avg_speed_mps": full_rl_speed,
             "avg_wait_s": full_rl_wait,
             "throughput": None,
-            "ev_travel_time_s": FULL_RL_EV_TRAVEL_TIME,
+            "ev_travel_time_s": full_rl_ev_time,
             "collisions": None,
             "notes": "Joint RL stack delivers fastest EV traversal but PPO policy over-prioritizes speed reward.",
         },
@@ -190,14 +190,19 @@ def _build_report(df: pd.DataFrame, ppo_data: dict[str, Any]) -> str:
         "India Full RL (DQN signals)",
     ]
 
-    india_rule_coll = float(df.loc[df["scenario"] == "India Rule-Based V2X", "collisions"].iloc[0])
-    india_full_coll = float(df.loc[df["scenario"] == "India Full RL (DQN signals)", "collisions"].iloc[0])
+    india_rule_coll = float(pd.to_numeric(df.loc[df["scenario"] == "India Rule-Based V2X", "collisions"], errors="coerce").fillna(0).iloc[0])
+    india_full_coll = float(pd.to_numeric(df.loc[df["scenario"] == "India Full RL (DQN signals)", "collisions"], errors="coerce").fillna(0).iloc[0])
     coll_red = ((india_rule_coll - india_full_coll) / india_rule_coll) * 100 if india_rule_coll else 0.0
+    null_ev = pd.to_numeric(df.loc[df["scenario"] == "Null Baseline (standard traffic)", "ev_travel_time_s"], errors="coerce").dropna()
+    full_ev = pd.to_numeric(df.loc[df["scenario"] == "Full RL (DQN + PPO-GLOSA) (standard traffic)", "ev_travel_time_s"], errors="coerce").dropna()
+    null_ev_val = float(null_ev.iloc[0]) if not null_ev.empty else 0.0
+    full_ev_val = float(full_ev.iloc[0]) if not full_ev.empty else 0.0
+    ev_improve_pct = ((null_ev_val - full_ev_val) / null_ev_val * 100.0) if null_ev_val > 0 and full_ev_val > 0 else 0.0
 
     report = f"""# V2X Traffic Management in Mehdipatnam, Hyderabad
 
 ## Abstract
-This project presents a V2X-aware traffic-management framework developed for the real Mehdipatnam road network in Hyderabad using SUMO 1.25.0. The study evaluates four operational modes: null baseline control, rule-based V2X, RL-DQN adaptive signal control, and a full RL stack that couples DQN signals with PPO-GLOSA speed advisories. Simulations were run for 1800 steps per experiment, with additional mixed-fleet stress testing representing Indian driving heterogeneity through two-wheelers, auto-rickshaw-like low-mass traffic behavior, and heavy-bike dynamics. Results indicate that signal-level RL contributes clear safety resilience under unstructured traffic, reducing collision events from {int(india_rule_coll)} to {int(india_full_coll)} ({coll_red:.1f}% reduction). Emergency-vehicle mobility also improves from 222 s in the baseline condition to 146 s under full RL integration. PPO-GLOSA achieved stable training rewards but converged toward a speed-maximizing policy due to reward shaping, exposing a controllability limitation. Overall, the project demonstrates practical V2X gains while identifying concrete directions for multi-objective RL refinement.
+This project presents a V2X-aware traffic-management framework developed for the real Mehdipatnam road network in Hyderabad using SUMO 1.25.0. The study evaluates four operational modes: null baseline control, rule-based V2X, RL-DQN adaptive signal control, and a full RL stack that couples DQN signals with PPO-GLOSA speed advisories. Simulations were run for 1800 steps per experiment, with additional mixed-fleet stress testing representing Indian driving heterogeneity through two-wheelers, auto-rickshaw-like low-mass traffic behavior, and heavy-bike dynamics. Results indicate that signal-level RL contributes clear safety resilience under unstructured traffic, reducing collision events from {int(india_rule_coll)} to {int(india_full_coll)} ({coll_red:.1f}% reduction). Emergency-vehicle mobility improves by {ev_improve_pct:.1f}% between available baseline and full-RL runs. PPO-GLOSA achieved stable training rewards but converged toward a speed-maximizing policy due to reward shaping, exposing a controllability limitation. Overall, the project demonstrates practical V2X gains while identifying concrete directions for multi-objective RL refinement.
 
 ## 1. Introduction
 Urban traffic management in Hyderabad is uniquely challenging because lane discipline is weakly enforced, modal diversity is high, and opportunistic gap acceptance is common. Mehdipatnam, a dense, multi-leg junction with high directional conflict, is an ideal site for evaluating resilient V2X strategies under conditions closer to Indian ground reality than lane-homogeneous benchmarks. Conventional fixed-time and rule-based approaches often fail to react to rapidly changing queue topology, especially when emergency vehicles and mixed micro-mobility interact near signalized conflict zones. This BTP therefore focuses on combining communication-aware control with reinforcement learning, using a reproducible SUMO environment mapped from a real OSM network. The objective is not only to improve flow metrics such as speed and waiting time, but also to sustain safety and operational stability when traffic composition shifts. By contrasting standard traffic and a stress scenario dominated by two-wheelers and irregular maneuvers, the work quantifies where V2X logic remains robust and where policy design must improve.
@@ -237,9 +242,9 @@ The most critical result is safety: collisions drop from {int(india_rule_coll)} 
 
 ## 4. Key Findings
 - Real-network simulation on Mehdipatnam demonstrates that adaptive V2X is feasible in a Hyderabad-specific geometry rather than synthetic grids.
-- Under Indian mixed traffic, full RL signal control reduced collisions from 19 to 6, a 68.4% safety improvement over rule-based V2X.
+- Under Indian mixed traffic, full RL signal control reduced collisions from {int(india_rule_coll)} to {int(india_full_coll)}, a {coll_red:.1f}% safety improvement over rule-based V2X.
 - DQN signal control exhibited stronger stress robustness than rule-based methods, consistent with the reported +0.5% versus -1.1% comparative trend.
-- Emergency-vehicle travel time improved from 222 s in null baseline to 146 s in full RL, corresponding to about 34% faster clearance.
+- Emergency-vehicle travel time improvement from baseline to full RL is {ev_improve_pct:.1f}% for runs where both values are available.
 - PPO-GLOSA training converged, but convergence reflected speed-focused reward exploitation rather than balanced policy optimality.
 - The system-level lesson is that signal-level RL currently contributes the most reliable resilience gains, while trajectory-level RL needs reward redesign.
 

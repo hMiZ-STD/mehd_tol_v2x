@@ -29,6 +29,12 @@ def main() -> None:
     full_std = _row(df, "Full RL (DQN + PPO-GLOSA) (standard traffic)")
     india_rule = _row(df, "India Rule-Based V2X")
     india_full = _row(df, "India Full RL (DQN signals)")
+    coll_rule = float(india_rule.get("collisions", 0) or 0)
+    coll_full = float(india_full.get("collisions", 0) or 0)
+    coll_red = ((coll_rule - coll_full) / coll_rule * 100.0) if coll_rule > 0 else 0.0
+    null_ev = float(null_std.get("ev_travel_time_s", 0) or 0)
+    full_ev = float(full_std.get("ev_travel_time_s", 0) or 0)
+    ev_improve = ((null_ev - full_ev) / null_ev * 100.0) if null_ev > 0 and full_ev > 0 else 0.0
 
     content = f"""# BTP Presentation Script (10 Minutes)
 
@@ -127,8 +133,8 @@ We report this limitation transparently: the PPO component converged, but toward
 ## Slide 8: Indian Traffic Stress Test
 - India Rule-Based collisions: {_fmt(india_rule['collisions'], 0)}
 - India Full RL collisions: {_fmt(india_full['collisions'], 0)}
-- Net safety improvement: 68% reduction (19 to 6)
-- V2X resilience under stress reported at 99.6%
+- Net safety improvement: {_fmt(coll_red, 1)}% reduction ({_fmt(coll_rule, 0)} to {_fmt(coll_full, 0)})
+- V2X resilience under stress is derived from latest KPI outputs
 
 **Speaker Notes:**
 This slide is the strongest project result: under realistic heterogeneous traffic, RL signal control remains stable while rule-based control degrades sharply in safety. The result supports resilience-oriented deployment potential.
@@ -140,8 +146,8 @@ This slide is the strongest project result: under realistic heterogeneous traffi
 ## Slide 9: Key Findings
 - Real-network V2X evaluation is feasible and reproducible in SUMO
 - DQN signal control improves robustness under unstructured traffic
-- Indian stress safety gain: collisions reduced from 19 to 6
-- EV travel time improved from 222 s to 146 s (34% faster)
+- Indian stress safety gain: collisions reduced from {_fmt(coll_rule, 0)} to {_fmt(coll_full, 0)}
+- EV travel time improvement: {_fmt(ev_improve, 1)}% faster (baseline vs full RL when both are available)
 - PPO-GLOSA limitation identified as speed-biased reward convergence
 - Best near-term deployment path: DQN-focused adaptive signal layer
 

@@ -9,7 +9,7 @@ import config
 from main import run
 
 MODES = ("null_baseline", "rule_based_v2x", "rule_based_no_ev")
-RUN_STEPS = 1800
+RUN_STEPS = config.SIM_STEPS
 PROGRESS_INTERVAL = 300
 
 

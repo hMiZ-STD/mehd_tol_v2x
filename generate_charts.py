@@ -104,19 +104,31 @@ def chart_ev_time(df: pd.DataFrame) -> None:
     baseline_row = baseline_df.loc[baseline_df["mode"] == "null_baseline"]
     rule_row = baseline_df.loc[baseline_df["mode"] == "rule_based_v2x"]
 
-    null_time = 222.0
+    null_time = np.nan
     if "ev_travel_time_s" in baseline_df.columns and not baseline_row.empty:
         v = pd.to_numeric(baseline_row.iloc[0]["ev_travel_time_s"], errors="coerce")
         if not np.isnan(v):
             null_time = float(v)
 
-    rule_time = null_time
+    rule_time = np.nan
     if "ev_travel_time_s" in baseline_df.columns and not rule_row.empty:
         v = pd.to_numeric(rule_row.iloc[0]["ev_travel_time_s"], errors="coerce")
         if not np.isnan(v):
             rule_time = float(v)
 
-    full_rl_time = 146.0
+    full_rl_time = np.nan
+    summary_full_rl = df.loc[df["scenario"] == "Full RL (DQN + PPO-GLOSA) (standard traffic)", "ev_travel_time_s"]
+    if not summary_full_rl.empty:
+        v = pd.to_numeric(summary_full_rl.iloc[0], errors="coerce")
+        if not np.isnan(v):
+            full_rl_time = float(v)
+
+    if np.isnan(null_time):
+        null_time = 0.0
+    if np.isnan(rule_time):
+        rule_time = null_time
+    if np.isnan(full_rl_time):
+        full_rl_time = 0.0
 
     labels = ["Null Baseline", "Rule-Based V2X", "Full RL (DQN+PPO)"]
     values = np.array([null_time, rule_time, full_rl_time], dtype=float)
