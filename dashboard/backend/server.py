@@ -106,12 +106,31 @@ def _prepare_runtime_config(config: SimConfig, run_id: str) -> str:
     if input_node is None:
         raise RuntimeError("SUMO config missing <input>")
 
+    def _abs_path_list(value: str) -> str:
+        parts = [p.strip() for p in value.split(",") if p.strip()]
+        abs_parts = []
+        for p in parts:
+            if os.path.isabs(p):
+                abs_parts.append(p.replace("\\", "/"))
+            else:
+                abs_parts.append(os.path.join(PROJECT_ROOT, p).replace("\\", "/"))
+        return ",".join(abs_parts)
+
+    # Normalize base config file references to absolute paths so runtime cfg can
+    # live under outputs/ without breaking relative path resolution.
+    for tag in ("net-file", "route-files", "additional-files"):
+        node = input_node.find(tag)
+        if node is not None and node.get("value"):
+            node.set("value", _abs_path_list(node.get("value", "")))
+
+    gui_node = cfg_root.find("gui-settings-file")
+    if gui_node is not None and gui_node.get("value"):
+        gui_node.set("value", _abs_path_list(gui_node.get("value", "")))
+
     route_node = input_node.find("route-files")
     if route_node is None:
         raise RuntimeError("SUMO config missing <route-files>")
-
-    base_route_rel = route_node.get("value", "").split(",")[0].strip()
-    base_route_path = os.path.join(PROJECT_ROOT, base_route_rel)
+    base_route_path = route_node.get("value", "").split(",")[0].strip()
     if not os.path.exists(base_route_path):
         raise FileNotFoundError(f"Route file not found: {base_route_path}")
 
