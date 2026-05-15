@@ -31,7 +31,7 @@ def reset_kpi_log() -> None:
     _cum_arrived = 0
 
 
-def log_step(step: int, active_evs: list) -> None:
+def log_step(step: int, active_evs: list, signal_mode: str = "Rule-Based") -> None:
     global _cum_departed, _cum_arrived
 
     all_vehicles = traci.vehicle.getIDList()
@@ -76,6 +76,7 @@ def log_step(step: int, active_evs: list) -> None:
             "congestion_pct": congestion,
             "avg_wait_s": round(avg_wait, 2),
             "active_evs": len(active_evs),
+            "signal_mode": signal_mode,
             "co2_mg_s": co2_total,
             "fuel_waste_index": round(fuel_waste, 2),
             "total_departed_cum": _cum_departed,

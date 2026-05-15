@@ -39,12 +39,14 @@ SUMO_CFG = str(PROJECT_ROOT / "mehd_tol.sumocfg")
 LOG_DIR = "outputs/"
 OUTPUT_CSV = str(Path(LOG_DIR) / "v2x_kpi_log.csv")
 SUMO_MESSAGE_LOG = str(Path(LOG_DIR) / "sumo.log")
+MODEL_DIR = "outputs/models"
 
 # Runtime mode toggles
 HEADLESS = False
 BASELINE_MODE = False
 USE_RL_SIGNALS = False
 USE_RL_GLOSA = False
+MIN_GREEN_STEPS = 10
 
 # SUMO binary defaults
 SUMO_BINARY_GUI = _find_sumo_binary(gui=True)
