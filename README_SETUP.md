@@ -1,6 +1,12 @@
-﻿# Start Dashboard
-cd D:\mehd_tol_v2x
+# Start Dashboard
+cd <project-root>
+
+# Windows
 .\venv\Scripts\activate
+
+# macOS/Linux
+# source venv/bin/activate
+
 cd dashboard\backend
 python server.py
 

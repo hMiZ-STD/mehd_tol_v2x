@@ -2,6 +2,7 @@
 warnings.filterwarnings("ignore")
 
 import sys, os, json, glob, threading, subprocess
+import signal
 import time, uuid, re, shutil, math
 from pathlib import Path
 from dataclasses import dataclass
@@ -130,7 +131,8 @@ def _prepare_runtime_config(config: SimConfig, run_id: str) -> str:
     route_node = input_node.find("route-files")
     if route_node is None:
         raise RuntimeError("SUMO config missing <route-files>")
-    base_route_path = route_node.get("value", "").split(",")[0].strip()
+    original_routes = [p.strip() for p in route_node.get("value", "").split(",") if p.strip()]
+    base_route_path = original_routes[0]
     if not os.path.exists(base_route_path):
         raise FileNotFoundError(f"Route file not found: {base_route_path}")
 
@@ -145,7 +147,8 @@ def _prepare_runtime_config(config: SimConfig, run_id: str) -> str:
     runtime_route_path = os.path.join(OUTPUTS_DIR, f"run_{run_id}.rou.xml")
     route_tree.write(runtime_route_path, encoding="utf-8", xml_declaration=True)
 
-    route_node.set("value", runtime_route_path.replace("\\", "/"))
+    preserved_routes = [p.replace("\\", "/") for p in original_routes[1:]]
+    route_node.set("value", ",".join([runtime_route_path.replace("\\", "/"), *preserved_routes]))
 
     time_node = cfg_root.find("time")
     if time_node is not None:
@@ -162,13 +165,14 @@ def _run_simulation_thread(config: SimConfig, run_id: str):
     try:
         runtime_cfg = _prepare_runtime_config(config, run_id)
         mode = config.mode if config.mode in {"null_baseline", "rule_based_v2x", "rule_based_no_ev"} else "rule_based_v2x"
+        output_csv = _run_csv_path(run_id)
         py = f"""
 import sys
 sys.path.insert(0, r'{PROJECT_ROOT}')
 import config as cfg
 import main
 cfg.SUMO_CFG = r'{runtime_cfg}'
-main.run(no_gui=True, mode={mode!r}, sim_steps={int(config.sim_steps)}, use_rl_signals={bool(config.use_rl_signals)}, use_rl_glosa={bool(config.use_rl_glosa)})
+main.run(no_gui=True, mode={mode!r}, sim_steps={int(config.sim_steps)}, output_csv={output_csv!r}, use_rl_signals={bool(config.use_rl_signals)}, use_rl_glosa={bool(config.use_rl_glosa)})
 """
         cmd = [sys.executable, "-u", "-c", py]
         env = os.environ.copy()
@@ -185,6 +189,7 @@ main.run(no_gui=True, mode={mode!r}, sim_steps={int(config.sim_steps)}, use_rl_s
             bufsize=1,
             cwd=PROJECT_ROOT,
             env=env,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
         )
         with _state_lock:
             _sim_state["process"] = process
@@ -206,12 +211,7 @@ main.run(no_gui=True, mode={mode!r}, sim_steps={int(config.sim_steps)}, use_rl_s
                     _sim_state["progress"] = int(step / total * 100)
 
         process.wait()
-        output_csv = _run_csv_path(run_id)
         if process.returncode == 0:
-            latest = _latest_kpi_csv()
-            if latest:
-                shutil.copy2(latest, output_csv)
-
             avg_speed = avg_wait = 0.0
             collisions = 0
             if os.path.exists(output_csv):
@@ -230,6 +230,9 @@ main.run(no_gui=True, mode={mode!r}, sim_steps={int(config.sim_steps)}, use_rl_s
                     "csv": f"run_{run_id}.csv",
                 }
                 _sim_state["latest_csv"] = output_csv
+                _sim_state["step"] = int(config.sim_steps)
+                _sim_state["total"] = int(config.sim_steps)
+                _sim_state["progress"] = 100
 
             with open(_run_meta_path(run_id), "w", encoding="utf-8") as f:
                 json.dump(
@@ -317,7 +320,27 @@ def api_cancel():
         p = _sim_state["process"]
     if p:
         try:
-            p.terminate()
+            if os.name == "nt":
+                try:
+                    p.send_signal(signal.CTRL_BREAK_EVENT)
+                    p.wait(timeout=5)
+                except Exception:
+                    pass
+                if p.poll() is None:
+                    p.terminate()
+                    try:
+                        p.wait(timeout=3)
+                    except Exception:
+                        pass
+                if p.poll() is None:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(p.pid), "/T", "/F"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+            else:
+                p.terminate()
         except Exception:
             pass
     with _state_lock:
@@ -419,11 +442,18 @@ def api_results():
                         "collisions": float(pd.to_numeric(df.get("collision_rate", pd.Series([0])), errors="coerce").fillna(0).sum()),
                         "notes": "Interactive run",
                         "source": "run",
+                        "mtime": os.path.getmtime(fp),
                     }
                 )
             )
         except Exception:
             pass
+    run_rows = [r for r in rows if r.get("source") == "run"]
+    base_rows = [r for r in rows if r.get("source") != "run"]
+    run_rows.sort(key=lambda r: float(r.get("mtime") or 0.0))
+    for r in run_rows:
+        r.pop("mtime", None)
+    rows = base_rows + run_rows
     return jsonify(rows)
 
 
@@ -461,6 +491,12 @@ def api_history():
 
 @app.get("/api/kpi_log")
 def api_kpi_log():
+    run_id = request.args.get("run_id", "").strip()
+    if run_id:
+        explicit = _run_csv_path(run_id)
+        if os.path.exists(explicit):
+            df = pd.read_csv(explicit).tail(60)
+            return jsonify(df.where(pd.notna(df), None).to_dict(orient="records"))
     with _state_lock:
         latest_csv = _sim_state.get("latest_csv")
     path = latest_csv or _latest_run_csv() or os.path.join(OUTPUTS_DIR, "v2x_kpi_log.csv")
